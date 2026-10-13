@@ -1,0 +1,105 @@
+from itertools import count
+
+from matplotlib.path import Path
+import paho.mqtt.client as mqtt
+import json
+import ssl
+from datetime import datetime
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    print("\n" + "=" * 60)
+    print("  GRAND MARINA WATER MONITORING DASHBOARD")
+    print("  Connected at:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    print("=" * 60)
+    client.subscribe("hydroficient/grandmarina/#")
+
+def on_message(client, userdata, msg):
+    topic = msg.topic
+
+    if "/sensors/" in topic:
+        handle_sensor_reading(msg)
+    elif "/alerts/" in topic:
+        handle_alert(msg)
+    elif "/commands/" in topic:
+        handle_command(msg)
+    elif "/status/" in topic:
+        handle_status(msg)
+    else:
+        print(f"Unknown topic: {topic}")
+
+def handle_sensor_reading(msg):
+    try:
+        data = json.loads(msg.payload.decode())
+        display_reading(data)  # Uses your existing display_reading() function
+    except json.JSONDecodeError:
+        print(f"\n[RAW SENSOR MESSAGE] {msg.topic}")
+        print(f"      {msg.payload.decode()}")
+
+def handle_alert(msg):
+    print(f"\n*** ALERT ***")
+    print(f"Topic: {msg.topic}")
+    print(f"Message: {msg.payload.decode()}")
+
+def handle_command(msg):
+    print(f"\n[COMMAND] {msg.topic}: {msg.payload.decode()}")
+
+def handle_status(msg):
+    # Could update a "last seen" tracker
+    print(f"\n[STATUS] {msg.topic}: {msg.payload.decode()}")
+
+def display_reading(data):
+    """Format and display a sensor reading with alerts."""
+    location = data.get('location', 'Unknown')
+    device_id = data.get('device_id', 'Unknown')
+    up = data.get('pressure_upstream', 0)
+    down = data.get('pressure_downstream', 0)
+    flow = data.get('flow_rate', 0)
+    timestamp = data.get('timestamp', 'Unknown')
+    count = data.get('counter', 0)
+    differential = up - down
+
+    # Check for anomalies
+    alerts = []
+
+    if up > 90:
+        alerts.append("HIGH UPSTREAM PRESSURE")
+    if down < 65:
+        alerts.append("LOW DOWNSTREAM PRESSURE")
+    if flow > 60:
+        alerts.append("HIGH FLOW RATE - POSSIBLE LEAK")
+    if flow < 20:
+        alerts.append("LOW FLOW RATE - POSSIBLE BLOCKAGE")
+
+    # Display
+    print(f"\n{'─' * 40}")
+    print(f"  Location:  {location}")
+    print(f"  Device ID: {device_id}")
+    print(f"  Time:      {timestamp}")
+    print(f"  Count:     #{count}")
+
+    if alerts:
+        print(f"  *** ALERTS ***")
+        for alert in alerts:
+            print(f"  >>> {alert}")
+
+    print(f"{'─' * 40}")
+    print(f"  Pressure (upstream):   {up:.1f} PSI")
+    print(f"  Pressure (downstream): {down:.1f} PSI")
+    print(f"  Flow rate:             {flow:.1f} gal/min")
+    print(f"  Pressure differential: {differential:.1f} PSI")
+
+def main():
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.tls_set(ca_certs="certs/ca.pem", # Trust this CA
+                            certfile=None,  # No client cert (server-only TLS)
+                            keyfile=None, # No client key
+                            cert_reqs=ssl.CERT_REQUIRED, # Verify server certificate
+                            tls_version=ssl.PROTOCOL_TLS # Use modern TLS
+                            )
+    client.connect("localhost", 8883)
+    client.loop_forever()
+
+if __name__ == "__main__":
+    main()
